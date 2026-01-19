@@ -1692,6 +1692,7 @@ dependencies = [
  "reqwest 0.13.1",
  "rig-core",
  "serde_json",
+ "tempfile",
  "tokio",
 ]
 

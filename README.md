@@ -1,5 +1,10 @@
 # singleshot
 
+[![CI](https://github.com/vincentzhangz/singleshot/actions/workflows/ci.yml/badge.svg)](https://github.com/vincentzhangz/singleshot/actions/workflows/ci.yml)
+[![Crates.io](https://img.shields.io/crates/v/singleshot.svg)](https://crates.io/crates/singleshot)
+[![Downloads](https://img.shields.io/crates/d/singleshot.svg)](https://crates.io/crates/singleshot)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 A CLI tool for testing AI models with a single prompt. Supports multiple providers including OpenAI, Anthropic, Ollama, and OpenRouter.
 
 ## Features
@@ -78,6 +83,13 @@ singleshot chat -p "What's in this image?" -P openai -i photo.jpg
 | `openai`     | gpt-4o                   | `OPENAI_API_KEY`     |
 | `anthropic`  | claude-sonnet-4-20250514 | `ANTHROPIC_API_KEY`  |
 | `openrouter` | openai/gpt-4o            | `OPENROUTER_API_KEY` |
+
+> **Note**: The `openai` provider is compatible with any service that implements the OpenAI Chat Completions API (`/v1/chat/completions`), including:
+>
+> - **Cloud services**: OpenAI, Azure OpenAI, Groq, Together AI, Fireworks AI
+> - **Local inference**: LM Studio, LocalAI, vLLM, Ollama (with OpenAI compatibility), text-generation-webui
+>
+> Set a custom base URL with `-b` or `OPENAI_BASE_URL` environment variable.
 
 ## Examples
 

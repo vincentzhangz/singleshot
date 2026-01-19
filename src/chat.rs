@@ -1,9 +1,9 @@
+use crate::provider::Provider;
 use rig::completion::Prompt;
+use rig::completion::{AssistantContent, CompletionModel};
 use rig::prelude::*;
 use rig::providers::{anthropic, ollama, openai, openrouter};
 use serde_json::json;
-
-use crate::provider::Provider;
 
 fn get_api_key(env_var: &str) -> Result<String, Box<dyn std::error::Error>> {
     std::env::var(env_var).map_err(|_| {
@@ -24,6 +24,7 @@ pub struct ChatConfig {
     pub image: Option<String>,
     pub video: Option<String>,
     pub audio: Option<String>,
+    pub base_url: Option<String>,
 }
 
 impl ChatConfig {
@@ -65,6 +66,11 @@ impl ChatConfig {
         self
     }
 
+    pub fn base_url(mut self, url: Option<String>) -> Self {
+        self.base_url = url;
+        self
+    }
+
     pub fn has_media(&self) -> bool {
         self.image.is_some() || self.video.is_some() || self.audio.is_some()
     }
@@ -103,10 +109,39 @@ async fn send_text_only(
     }
 
     match provider {
-        Provider::Openai => build_and_send!(openai::Client::from_env()),
+        Provider::Openai => send_text_openai(prompt, config).await,
         Provider::Anthropic => build_and_send!(anthropic::Client::from_env()),
         Provider::Ollama => build_and_send!(ollama::Client::from_env()),
         Provider::Openrouter => build_and_send!(openrouter::Client::from_env()),
+    }
+}
+
+async fn send_text_openai(
+    prompt: &str,
+    config: &ChatConfig,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let client = openai::Client::from_env();
+    let model = client.completion_model(&config.model);
+
+    let mut builder = model
+        .completion_request(prompt)
+        .temperature(config.temperature);
+
+    if let Some(sys) = &config.system {
+        builder = builder.preamble(sys.clone());
+    }
+    if let Some(tokens) = config.max_tokens {
+        builder = builder.max_tokens(tokens);
+    }
+
+    let response = builder.send().await?;
+
+    match response.choice.first() {
+        AssistantContent::Text(text) => Ok(text.text.clone()),
+        AssistantContent::ToolCall(tc) => {
+            Err(format!("Unexpected tool call: {}", tc.function.name).into())
+        }
+        _ => Err("Unexpected response type".into()),
     }
 }
 
@@ -143,8 +178,14 @@ async fn send_vision_openai(
         payload["max_tokens"] = json!(tokens);
     }
 
+    let base_url = config
+        .base_url
+        .as_deref()
+        .unwrap_or("https://api.openai.com/v1");
+    let url = format!("{}/chat/completions", base_url);
+
     let response: serde_json::Value = client
-        .post("https://api.openai.com/v1/chat/completions")
+        .post(&url)
         .header("Authorization", format!("Bearer {}", api_key))
         .json(&payload)
         .send()
@@ -174,8 +215,14 @@ async fn send_vision_anthropic(
         payload["system"] = json!(sys);
     }
 
+    let base_url = config
+        .base_url
+        .as_deref()
+        .unwrap_or("https://api.anthropic.com");
+    let url = format!("{}/v1/messages", base_url);
+
     let response: serde_json::Value = client
-        .post("https://api.anthropic.com/v1/messages")
+        .post(&url)
         .header("x-api-key", &api_key)
         .header("anthropic-version", "2023-06-01")
         .header("content-type", "application/json")
@@ -208,8 +255,14 @@ async fn send_vision_openrouter(
         payload["max_tokens"] = json!(tokens);
     }
 
+    let base_url = config
+        .base_url
+        .as_deref()
+        .unwrap_or("https://openrouter.ai/api/v1");
+    let url = format!("{}/chat/completions", base_url);
+
     let response: serde_json::Value = client
-        .post("https://openrouter.ai/api/v1/chat/completions")
+        .post(&url)
         .header("Authorization", format!("Bearer {}", api_key))
         .json(&payload)
         .send()
@@ -274,4 +327,210 @@ fn extract_openai_response(
         .as_str()
         .unwrap_or("No response")
         .to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_chat_config_new() {
+        let config = ChatConfig::new("gpt-4");
+        assert_eq!(config.model, "gpt-4");
+        assert_eq!(config.temperature, 0.7);
+        assert!(config.system.is_none());
+        assert!(config.max_tokens.is_none());
+        assert!(config.image.is_none());
+        assert!(config.video.is_none());
+        assert!(config.audio.is_none());
+        assert!(config.base_url.is_none());
+    }
+
+    #[test]
+    fn test_chat_config_default() {
+        let config = ChatConfig::default();
+        assert!(config.model.is_empty());
+        assert_eq!(config.temperature, 0.0);
+        assert!(config.system.is_none());
+    }
+
+    #[test]
+    fn test_chat_config_builder_system() {
+        let config = ChatConfig::new("model").system(Some("You are helpful".to_string()));
+        assert_eq!(config.system, Some("You are helpful".to_string()));
+    }
+
+    #[test]
+    fn test_chat_config_builder_temperature() {
+        let config = ChatConfig::new("model").temperature(0.9);
+        assert_eq!(config.temperature, 0.9);
+    }
+
+    #[test]
+    fn test_chat_config_builder_max_tokens() {
+        let config = ChatConfig::new("model").max_tokens(Some(2048));
+        assert_eq!(config.max_tokens, Some(2048));
+    }
+
+    #[test]
+    fn test_chat_config_builder_image() {
+        let config = ChatConfig::new("model").image(Some("base64data".to_string()));
+        assert_eq!(config.image, Some("base64data".to_string()));
+    }
+
+    #[test]
+    fn test_chat_config_builder_video() {
+        let config = ChatConfig::new("model").video(Some("video_data".to_string()));
+        assert_eq!(config.video, Some("video_data".to_string()));
+    }
+
+    #[test]
+    fn test_chat_config_builder_audio() {
+        let config = ChatConfig::new("model").audio(Some("audio_data".to_string()));
+        assert_eq!(config.audio, Some("audio_data".to_string()));
+    }
+
+    #[test]
+    fn test_chat_config_builder_base_url() {
+        let config = ChatConfig::new("model").base_url(Some("https://custom.api.com".to_string()));
+        assert_eq!(config.base_url, Some("https://custom.api.com".to_string()));
+    }
+
+    #[test]
+    fn test_chat_config_builder_chain() {
+        let config = ChatConfig::new("gpt-4")
+            .system(Some("Be helpful".to_string()))
+            .temperature(0.8)
+            .max_tokens(Some(1000))
+            .base_url(Some("https://api.test.com".to_string()));
+
+        assert_eq!(config.model, "gpt-4");
+        assert_eq!(config.system, Some("Be helpful".to_string()));
+        assert_eq!(config.temperature, 0.8);
+        assert_eq!(config.max_tokens, Some(1000));
+        assert_eq!(config.base_url, Some("https://api.test.com".to_string()));
+    }
+
+    #[test]
+    fn test_chat_config_has_media_false() {
+        let config = ChatConfig::new("model");
+        assert!(!config.has_media());
+    }
+
+    #[test]
+    fn test_chat_config_has_media_with_image() {
+        let config = ChatConfig::new("model").image(Some("data".to_string()));
+        assert!(config.has_media());
+    }
+
+    #[test]
+    fn test_chat_config_has_media_with_video() {
+        let config = ChatConfig::new("model").video(Some("data".to_string()));
+        assert!(config.has_media());
+    }
+
+    #[test]
+    fn test_chat_config_has_media_with_audio() {
+        let config = ChatConfig::new("model").audio(Some("data".to_string()));
+        assert!(config.has_media());
+    }
+
+    #[test]
+    fn test_chat_config_has_media_multiple() {
+        let config = ChatConfig::new("model")
+            .image(Some("img".to_string()))
+            .audio(Some("aud".to_string()));
+        assert!(config.has_media());
+    }
+
+    #[test]
+    fn test_build_vision_content_text_only() {
+        let content = build_vision_content("Hello", &None, true);
+        let arr = content.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["type"], "text");
+        assert_eq!(arr[0]["text"], "Hello");
+    }
+
+    #[test]
+    fn test_build_vision_content_openai_format_with_image() {
+        let image = Some("base64data".to_string());
+        let content = build_vision_content("Describe", &image, true);
+        let arr = content.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0]["type"], "image_url");
+        assert!(
+            arr[0]["image_url"]["url"]
+                .as_str()
+                .unwrap()
+                .contains("base64data")
+        );
+    }
+
+    #[test]
+    fn test_build_vision_content_anthropic_format_with_image() {
+        let image = Some("base64data".to_string());
+        let content = build_vision_content("Describe", &image, false);
+        let arr = content.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0]["type"], "image");
+        assert_eq!(arr[0]["source"]["type"], "base64");
+        assert_eq!(arr[0]["source"]["data"], "base64data");
+    }
+
+    #[test]
+    fn test_build_openai_payload() {
+        let content = json!([{"type": "text", "text": "test"}]);
+        let payload = build_openai_payload("gpt-4", content, 0.5);
+
+        assert_eq!(payload["model"], "gpt-4");
+        assert_eq!(payload["temperature"], 0.5);
+        assert!(payload["messages"].is_array());
+        assert_eq!(payload["messages"][0]["role"], "user");
+    }
+
+    #[test]
+    fn test_insert_system_message() {
+        let content = json!([{"type": "text", "text": "test"}]);
+        let mut payload = build_openai_payload("gpt-4", content, 0.5);
+
+        insert_system_message(&mut payload, "You are helpful");
+
+        let messages = payload["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["role"], "system");
+        assert_eq!(messages[0]["content"], "You are helpful");
+        assert_eq!(messages[1]["role"], "user");
+    }
+
+    #[test]
+    fn test_extract_openai_response_valid() {
+        let response = json!({
+            "choices": [{
+                "message": {
+                    "content": "Hello, world!"
+                }
+            }]
+        });
+        let result = extract_openai_response(&response).unwrap();
+        assert_eq!(result, "Hello, world!");
+    }
+
+    #[test]
+    fn test_extract_openai_response_missing_content() {
+        let response = json!({
+            "choices": [{
+                "message": {}
+            }]
+        });
+        let result = extract_openai_response(&response).unwrap();
+        assert_eq!(result, "No response");
+    }
+
+    #[test]
+    fn test_extract_openai_response_empty() {
+        let response = json!({});
+        let result = extract_openai_response(&response).unwrap();
+        assert_eq!(result, "No response");
+    }
 }

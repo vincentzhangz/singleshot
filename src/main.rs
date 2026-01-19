@@ -5,19 +5,17 @@ mod provider;
 mod report;
 mod ui;
 
-use std::fs;
-use std::io::{self, IsTerminal, Read};
-use std::path::PathBuf;
-use std::time::Instant;
-
 use base64::Engine;
-use clap::Parser;
-
 use chat::{ChatConfig, send_prompt};
+use clap::Parser;
 use cli::{Cli, Commands};
 use config::{LoadedConfig, MergedConfig, TEMPLATE};
 use provider::Provider;
 use report::Report;
+use std::fs;
+use std::io::{self, IsTerminal, Read};
+use std::path::PathBuf;
+use std::time::Instant;
 use ui::{BoxPrinter, completed, newline, status, status_done, status_done_detail};
 
 #[tokio::main]
@@ -141,7 +139,8 @@ async fn handle_chat(
         .max_tokens(config.max_tokens)
         .image(image_data)
         .video(video_data)
-        .audio(audio_data);
+        .audio(audio_data)
+        .base_url(config.base_url.map(String::from));
 
     let response = send_prompt(config.provider, &prompt_text, chat_config).await?;
     let elapsed = start.elapsed();
@@ -260,7 +259,9 @@ async fn handle_ping(
     status(&format!("Pinging {:?}...", provider));
     let start = Instant::now();
 
-    let chat_config = ChatConfig::new(provider.ping_model()).max_tokens(Some(10));
+    let chat_config = ChatConfig::new(provider.ping_model())
+        .max_tokens(Some(10))
+        .base_url(base_url.map(String::from));
     let _ = send_prompt(provider, "Say 'pong'", chat_config).await?;
 
     let elapsed = start.elapsed();

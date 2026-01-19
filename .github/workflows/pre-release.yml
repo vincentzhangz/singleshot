@@ -1,0 +1,170 @@
+name: Pre-Release
+
+on:
+  push:
+    tags:
+      - "v*-alpha*"
+      - "v*-beta*"
+      - "v*-rc*"
+  workflow_dispatch:
+    inputs:
+      version_suffix:
+        description: "Version suffix (e.g., alpha.1, beta.2, rc.1)"
+        required: true
+        default: "alpha.1"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --all-features
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            archive: tar.gz
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            archive: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package (Unix)
+        if: matrix.os != 'windows-latest'
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar -czvf ../../../singleshot-${{ matrix.target }}.tar.gz singleshot
+          cd -
+
+      - name: Package (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          cd target/${{ matrix.target }}/release
+          7z a ../../../singleshot-${{ matrix.target }}.zip singleshot.exe
+          cd -
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: singleshot-${{ matrix.target }}
+          path: singleshot-${{ matrix.target }}.*
+
+  pre-release:
+    name: Create Pre-Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Get version info
+        id: version
+        run: |
+          # Get base version from Cargo.toml
+          BASE_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+
+          # Get short commit hash
+          SHORT_SHA=$(git rev-parse --short HEAD)
+
+          # Determine version suffix
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            SUFFIX="${{ github.event.inputs.version_suffix }}"
+          elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            # Extract suffix from tag (e.g., v0.1.0-beta.1 -> beta.1)
+            TAG="${{ github.ref_name }}"
+            SUFFIX=$(echo "$TAG" | sed 's/v[0-9]*\.[0-9]*\.[0-9]*-//')
+          elif [[ "${{ github.ref }}" == refs/heads/beta ]]; then
+            SUFFIX="beta.${SHORT_SHA}"
+          elif [[ "${{ github.ref }}" == refs/heads/release/* ]]; then
+            BRANCH_SUFFIX=$(echo "${{ github.ref_name }}" | sed 's|release/||')
+            SUFFIX="rc.${BRANCH_SUFFIX}.${SHORT_SHA}"
+          else
+            SUFFIX="alpha.${SHORT_SHA}"
+          fi
+
+          VERSION="${BASE_VERSION}-${SUFFIX}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "tag=v${VERSION}" >> $GITHUB_OUTPUT
+          echo "Pre-release version: ${VERSION}"
+
+      - name: Create Pre-Release Tag
+        if: "!startsWith(github.ref, 'refs/tags/')"
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git tag -a "${{ steps.version.outputs.tag }}" -m "Pre-release ${{ steps.version.outputs.tag }}"
+          git push origin "${{ steps.version.outputs.tag }}"
+
+      - name: Create Pre-Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: "Pre-Release ${{ steps.version.outputs.version }}"
+          prerelease: true
+          generate_release_notes: true
+          body: |
+            ## ⚠️ Pre-Release Version
+
+            This is a pre-release version (`${{ steps.version.outputs.version }}`). It may contain bugs or incomplete features.
+
+            **Not recommended for production use.**
+
+            ### Installation
+
+            Download the appropriate binary for your platform from the assets below.
+
+            ### Changes
+
+            See the auto-generated release notes below.
+          files: artifacts/**/*
+
+  notify:
+    name: Notify
+    needs: pre-release
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Summary
+        run: |
+          if [[ "${{ needs.pre-release.result }}" == "success" ]]; then
+            echo "✅ Pre-release created successfully!"
+            echo "Check the releases page: https://github.com/${{ github.repository }}/releases"
+          else
+            echo "❌ Pre-release failed"
+            exit 1
+          fi
