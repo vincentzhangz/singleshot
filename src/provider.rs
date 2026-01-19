@@ -37,16 +37,6 @@ impl Provider {
         }
     }
 
-    #[allow(dead_code)]
-    pub const fn env_var_name(&self) -> &'static str {
-        match self {
-            Self::Openai => "OPENAI_BASE_URL",
-            Self::Ollama => "OLLAMA_API_BASE_URL",
-            Self::Anthropic => "ANTHROPIC_API_KEY",
-            Self::Openrouter => "OPENROUTER_API_KEY",
-        }
-    }
-
     pub fn setup_base_url(&self, base_url: Option<&str>) {
         let url = base_url.unwrap_or(self.default_base_url());
 
@@ -309,26 +299,6 @@ mod tests {
     #[test]
     fn test_openrouter_ping_model() {
         assert_eq!(Provider::Openrouter.ping_model(), "openai/gpt-4o-mini");
-    }
-
-    #[test]
-    fn test_openai_env_var_name() {
-        assert_eq!(Provider::Openai.env_var_name(), "OPENAI_BASE_URL");
-    }
-
-    #[test]
-    fn test_ollama_env_var_name() {
-        assert_eq!(Provider::Ollama.env_var_name(), "OLLAMA_API_BASE_URL");
-    }
-
-    #[test]
-    fn test_anthropic_env_var_name() {
-        assert_eq!(Provider::Anthropic.env_var_name(), "ANTHROPIC_API_KEY");
-    }
-
-    #[test]
-    fn test_openrouter_env_var_name() {
-        assert_eq!(Provider::Openrouter.env_var_name(), "OPENROUTER_API_KEY");
     }
 
     #[test]

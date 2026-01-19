@@ -56,6 +56,12 @@ pub enum Commands {
         #[arg(long, help = "Maximum tokens in response")]
         max_tokens: Option<u64>,
 
+        #[arg(
+            long = "mcp",
+            help = "MCP server URL(s) - can be specified multiple times (e.g., --mcp http://localhost:8080 --mcp http://localhost:8081)"
+        )]
+        mcp_server: Vec<String>,
+
         #[arg(short, long, help = "Show detailed information")]
         detail: bool,
 

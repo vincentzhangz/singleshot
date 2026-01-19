@@ -79,9 +79,9 @@ impl LoadedConfig {
     }
 }
 
-#[allow(dead_code)]
 pub struct MergedConfig<'a> {
     pub prompt: Option<String>,
+    #[allow(dead_code)]
     pub file: Option<PathBuf>,
     pub system: Option<&'a str>,
     pub image: Option<PathBuf>,
@@ -141,7 +141,7 @@ impl<'a> MergedConfig<'a> {
             .unwrap_or_else(|| self.provider.default_model().to_string())
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn has_media(&self) -> bool {
         self.image.is_some() || self.video.is_some() || self.audio.is_some()
     }

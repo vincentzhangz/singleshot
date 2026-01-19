@@ -1,9 +1,13 @@
+use crate::mcp::{LoggingMcpTool, McpSession};
 use crate::provider::Provider;
+use crate::ui::{status, status_done_detail};
 use rig::completion::Prompt;
 use rig::completion::{AssistantContent, CompletionModel};
 use rig::prelude::*;
 use rig::providers::{anthropic, ollama, openai, openrouter};
 use serde_json::json;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 fn get_api_key(env_var: &str) -> Result<String, Box<dyn std::error::Error>> {
     std::env::var(env_var).map_err(|_| {
@@ -25,6 +29,7 @@ pub struct ChatConfig {
     pub video: Option<String>,
     pub audio: Option<String>,
     pub base_url: Option<String>,
+    pub mcp_sessions: Vec<McpSession>,
 }
 
 impl ChatConfig {
@@ -71,8 +76,17 @@ impl ChatConfig {
         self
     }
 
+    pub fn mcp_sessions(mut self, sessions: Vec<McpSession>) -> Self {
+        self.mcp_sessions = sessions;
+        self
+    }
+
     pub fn has_media(&self) -> bool {
         self.image.is_some() || self.video.is_some() || self.audio.is_some()
+    }
+
+    pub fn has_mcp(&self) -> bool {
+        !self.mcp_sessions.is_empty()
     }
 }
 
@@ -85,7 +99,94 @@ pub async fn send_prompt(
         return send_with_vision(provider, prompt, &config).await;
     }
 
+    if config.has_mcp() {
+        return send_with_mcp(provider, prompt, &config).await;
+    }
+
     send_text_only(provider, prompt, &config).await
+}
+
+async fn send_with_mcp(
+    provider: &Provider,
+    prompt: &str,
+    config: &ChatConfig,
+) -> Result<String, Box<dyn std::error::Error>> {
+    if config.mcp_sessions.is_empty() {
+        return Err("No MCP sessions configured".into());
+    }
+
+    let total_tools: usize = config.mcp_sessions.iter().map(|s| s.tools.len()).sum();
+    status_done_detail("MCP tools loaded", &format!("{} tools", total_tools));
+
+    let called_tools: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+
+    use rig::tool::server::ToolServer;
+    let tool_server = ToolServer::new();
+    let tool_server_handle = tool_server.run();
+
+    for session in &config.mcp_sessions {
+        for t in &session.tools {
+            let logging_tool: LoggingMcpTool =
+                LoggingMcpTool::new(t.clone(), session.peer.clone(), called_tools.clone());
+            tool_server_handle
+                .add_tool(logging_tool)
+                .await
+                .map_err(|e| format!("Failed to add tool: {:?}", e))?;
+        }
+    }
+
+    status("Sending request...");
+
+    macro_rules! build_agent_with_tools {
+        ($client:expr, $tool_server_handle:expr, $called_tools:expr) => {{
+            let mut builder = $client.agent(&config.model).temperature(config.temperature);
+
+            if let Some(sys) = &config.system {
+                builder = builder.preamble(sys);
+            }
+            if let Some(tokens) = config.max_tokens {
+                builder = builder.max_tokens(tokens);
+            }
+
+            let result: Result<String, Box<dyn std::error::Error>> = {
+                let agent = builder.tool_server_handle($tool_server_handle).build();
+
+                let response = agent.prompt(prompt).multi_turn(3).await?;
+
+                let tools_used = $called_tools.lock().await;
+                if !tools_used.is_empty() {
+                    eprintln!("[+] Tools called: {}", tools_used.join(" → "));
+                }
+
+                Ok(response)
+            };
+
+            result
+        }};
+    }
+
+    match provider {
+        Provider::Openai => {
+            build_agent_with_tools!(openai::Client::from_env(), tool_server_handle, called_tools)
+        }
+        Provider::Anthropic => {
+            build_agent_with_tools!(
+                anthropic::Client::from_env(),
+                tool_server_handle,
+                called_tools
+            )
+        }
+        Provider::Ollama => {
+            build_agent_with_tools!(ollama::Client::from_env(), tool_server_handle, called_tools)
+        }
+        Provider::Openrouter => {
+            build_agent_with_tools!(
+                openrouter::Client::from_env(),
+                tool_server_handle,
+                called_tools
+            )
+        }
+    }
 }
 
 async fn send_text_only(
@@ -441,6 +542,18 @@ mod tests {
             .image(Some("img".to_string()))
             .audio(Some("aud".to_string()));
         assert!(config.has_media());
+    }
+
+    #[test]
+    fn test_chat_config_has_mcp_false() {
+        let config = ChatConfig::new("model");
+        assert!(!config.has_mcp());
+    }
+
+    #[test]
+    fn test_chat_config_mcp_session_builder() {
+        let config = ChatConfig::new("model").mcp_sessions(vec![]);
+        assert!(!config.has_mcp());
     }
 
     #[test]
