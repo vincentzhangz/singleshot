@@ -211,7 +211,7 @@ jobs:
     if: needs.pre-release.outputs.is_nightly == 'true'
     steps:
       - name: Update Homebrew formula
-        uses: dawidd6/action-homebrew-bump-formula@v4
+        uses: dawidd6/action-homebrew-bump-formula@v7
         with:
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           tap: vincentzhangz/homebrew-singleshot
