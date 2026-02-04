@@ -2,6 +2,7 @@ name: Pre-Release
 
 on:
   push:
+    branches: [dev]
     tags:
       - "v*-alpha*"
       - "v*-beta*"
@@ -9,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       version_suffix:
-        description: "Version suffix (e.g., alpha.1, beta.2, rc.1)"
+        description: "Version suffix (e.g., alpha.1, beta.2, rc.1, nightly)"
         required: true
         default: "alpha.1"
 
@@ -83,6 +84,10 @@ jobs:
     name: Create Pre-Release
     needs: build
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      is_nightly: ${{ steps.version.outputs.is_nightly }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -97,40 +102,86 @@ jobs:
         run: |
           # Get base version from Cargo.toml
           BASE_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
-
-          # Get short commit hash
           SHORT_SHA=$(git rev-parse --short HEAD)
+          DATE=$(date +%Y%m%d)
+          IS_NIGHTLY="false"
 
-          # Determine version suffix
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+          # Determine version suffix based on trigger
+          if [[ "${{ github.ref }}" == "refs/heads/dev" ]]; then
+            # Nightly build from dev branch
+            SUFFIX="nightly.${DATE}.${SHORT_SHA}"
+            TAG="nightly"
+            IS_NIGHTLY="true"
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             SUFFIX="${{ github.event.inputs.version_suffix }}"
+            if [[ "$SUFFIX" == "nightly" ]]; then
+              SUFFIX="nightly.${DATE}.${SHORT_SHA}"
+              TAG="nightly"
+              IS_NIGHTLY="true"
+            else
+              TAG="v${BASE_VERSION}-${SUFFIX}"
+            fi
           elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
             # Extract suffix from tag (e.g., v0.1.0-beta.1 -> beta.1)
             TAG="${{ github.ref_name }}"
             SUFFIX=$(echo "$TAG" | sed 's/v[0-9]*\.[0-9]*\.[0-9]*-//')
-          elif [[ "${{ github.ref }}" == refs/heads/beta ]]; then
-            SUFFIX="beta.${SHORT_SHA}"
-          elif [[ "${{ github.ref }}" == refs/heads/release/* ]]; then
-            BRANCH_SUFFIX=$(echo "${{ github.ref_name }}" | sed 's|release/||')
-            SUFFIX="rc.${BRANCH_SUFFIX}.${SHORT_SHA}"
           else
             SUFFIX="alpha.${SHORT_SHA}"
+            TAG="v${BASE_VERSION}-${SUFFIX}"
           fi
 
           VERSION="${BASE_VERSION}-${SUFFIX}"
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "tag=v${VERSION}" >> $GITHUB_OUTPUT
-          echo "Pre-release version: ${VERSION}"
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "is_nightly=${IS_NIGHTLY}" >> $GITHUB_OUTPUT
+          echo "Pre-release version: ${VERSION} (tag: ${TAG}, nightly: ${IS_NIGHTLY})"
+
+      - name: Delete existing nightly release
+        if: steps.version.outputs.is_nightly == 'true'
+        run: |
+          gh release delete nightly --yes || true
+          git push origin :refs/tags/nightly || true
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - name: Create Pre-Release Tag
-        if: "!startsWith(github.ref, 'refs/tags/')"
+        if: "!startsWith(github.ref, 'refs/tags/') && steps.version.outputs.is_nightly != 'true'"
         run: |
           git config user.name github-actions
           git config user.email github-actions@github.com
           git tag -a "${{ steps.version.outputs.tag }}" -m "Pre-release ${{ steps.version.outputs.tag }}"
           git push origin "${{ steps.version.outputs.tag }}"
 
+      - name: Create Nightly Release
+        if: steps.version.outputs.is_nightly == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly
+          name: "Nightly Build (${{ steps.version.outputs.version }})"
+          prerelease: true
+          generate_release_notes: false
+          body: |
+            ## 🌙 Nightly Build
+
+            **Version:** `${{ steps.version.outputs.version }}`
+            **Commit:** ${{ github.sha }}
+
+            ⚠️ **This is an automated nightly build from the `dev` branch.**
+            It may contain experimental features and bugs. Not recommended for production use.
+
+            ### Installation
+
+            Download the appropriate binary for your platform from the assets below.
+
+            Or via Homebrew (nightly tap):
+            ```bash
+            brew tap vincentzhangz/singleshot
+            brew install singleshot-nightly
+            ```
+          files: artifacts/**/*
+
       - name: Create Pre-Release
+        if: steps.version.outputs.is_nightly != 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
@@ -153,9 +204,97 @@ jobs:
             See the auto-generated release notes below.
           files: artifacts/**/*
 
+  homebrew:
+    name: Publish to Homebrew
+    needs: pre-release
+    runs-on: ubuntu-latest
+    if: needs.pre-release.outputs.is_nightly == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Wait for release assets
+        run: sleep 10
+
+      - name: Download release artifacts
+        run: |
+          curl -L -o singleshot-x86_64-apple-darwin.tar.gz \
+            "https://github.com/${{ github.repository }}/releases/download/nightly/singleshot-x86_64-apple-darwin.tar.gz"
+          curl -L -o singleshot-aarch64-apple-darwin.tar.gz \
+            "https://github.com/${{ github.repository }}/releases/download/nightly/singleshot-aarch64-apple-darwin.tar.gz"
+          curl -L -o singleshot-x86_64-unknown-linux-gnu.tar.gz \
+            "https://github.com/${{ github.repository }}/releases/download/nightly/singleshot-x86_64-unknown-linux-gnu.tar.gz"
+
+      - name: Calculate SHA256
+        id: sha
+        run: |
+          SHA_MACOS_X86=$(sha256sum singleshot-x86_64-apple-darwin.tar.gz | cut -d ' ' -f 1)
+          SHA_MACOS_ARM=$(sha256sum singleshot-aarch64-apple-darwin.tar.gz | cut -d ' ' -f 1)
+          SHA_LINUX=$(sha256sum singleshot-x86_64-unknown-linux-gnu.tar.gz | cut -d ' ' -f 1)
+          echo "sha_macos_x86=${SHA_MACOS_X86}" >> $GITHUB_OUTPUT
+          echo "sha_macos_arm=${SHA_MACOS_ARM}" >> $GITHUB_OUTPUT
+          echo "sha_linux=${SHA_LINUX}" >> $GITHUB_OUTPUT
+
+      - name: Checkout Homebrew tap
+        uses: actions/checkout@v4
+        with:
+          repository: vincentzhangz/homebrew-singleshot
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Update Homebrew nightly formula
+        run: |
+          cat > homebrew-tap/Formula/singleshot-nightly.rb << 'EOF'
+          # typed: false
+          # frozen_string_literal: true
+
+          class SingleshotNightly < Formula
+            desc "A CLI tool for testing AI models with a single prompt (nightly)"
+            homepage "https://github.com/vincentzhangz/singleshot"
+            version "${{ needs.pre-release.outputs.version }}"
+            license "MIT"
+
+            conflicts_with "singleshot", because: "both install a `singleshot` binary"
+
+            on_macos do
+              on_arm do
+                url "https://github.com/vincentzhangz/singleshot/releases/download/nightly/singleshot-aarch64-apple-darwin.tar.gz"
+                sha256 "${{ steps.sha.outputs.sha_macos_arm }}"
+              end
+              on_intel do
+                url "https://github.com/vincentzhangz/singleshot/releases/download/nightly/singleshot-x86_64-apple-darwin.tar.gz"
+                sha256 "${{ steps.sha.outputs.sha_macos_x86 }}"
+              end
+            end
+
+            on_linux do
+              on_intel do
+                url "https://github.com/vincentzhangz/singleshot/releases/download/nightly/singleshot-x86_64-unknown-linux-gnu.tar.gz"
+                sha256 "${{ steps.sha.outputs.sha_linux }}"
+              end
+            end
+
+            def install
+              bin.install "singleshot"
+            end
+
+            test do
+              assert_match "singleshot", shell_output("#{bin}/singleshot --version")
+            end
+          end
+          EOF
+
+      - name: Commit and push formula
+        run: |
+          cd homebrew-tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/singleshot-nightly.rb
+          git diff --cached --quiet || git commit -m "singleshot-nightly ${{ needs.pre-release.outputs.version }}"
+          git push
+
   notify:
     name: Notify
-    needs: pre-release
+    needs: [pre-release, homebrew]
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -163,6 +302,7 @@ jobs:
         run: |
           if [[ "${{ needs.pre-release.result }}" == "success" ]]; then
             echo "✅ Pre-release created successfully!"
+            echo "Version: ${{ needs.pre-release.outputs.version }}"
             echo "Check the releases page: https://github.com/${{ github.repository }}/releases"
           else
             echo "❌ Pre-release failed"
