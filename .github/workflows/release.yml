@@ -173,5 +173,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Formula/singleshot.rb
-          git diff --cached --quiet || git commit -m "chore: update homebrew formula to ${{ steps.release.outputs.version }}"
+          git diff --cached --quiet || git commit -m "chore: update homebrew formula to ${{ steps.release.outputs.version }} [skip ci]"
           git push
