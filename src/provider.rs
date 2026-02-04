@@ -37,16 +37,6 @@ impl Provider {
         }
     }
 
-    #[allow(dead_code)]
-    pub const fn env_var_name(&self) -> &'static str {
-        match self {
-            Self::Openai => "OPENAI_BASE_URL",
-            Self::Ollama => "OLLAMA_API_BASE_URL",
-            Self::Anthropic => "ANTHROPIC_API_KEY",
-            Self::Openrouter => "OPENROUTER_API_KEY",
-        }
-    }
-
     pub fn setup_base_url(&self, base_url: Option<&str>) {
         let url = base_url.unwrap_or(self.default_base_url());
 
@@ -223,5 +213,105 @@ impl Provider {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_provider_default_is_ollama() {
+        let provider = Provider::default();
+        assert!(matches!(provider, Provider::Ollama));
+    }
+
+    #[test]
+    fn test_openai_default_base_url() {
+        assert_eq!(
+            Provider::Openai.default_base_url(),
+            "https://api.openai.com/v1"
+        );
+    }
+
+    #[test]
+    fn test_anthropic_default_base_url() {
+        assert_eq!(
+            Provider::Anthropic.default_base_url(),
+            "https://api.anthropic.com"
+        );
+    }
+
+    #[test]
+    fn test_ollama_default_base_url() {
+        assert_eq!(
+            Provider::Ollama.default_base_url(),
+            "http://localhost:11434"
+        );
+    }
+
+    #[test]
+    fn test_openrouter_default_base_url() {
+        assert_eq!(
+            Provider::Openrouter.default_base_url(),
+            "https://openrouter.ai/api/v1"
+        );
+    }
+
+    #[test]
+    fn test_openai_default_model() {
+        assert_eq!(Provider::Openai.default_model(), "gpt-4o");
+    }
+
+    #[test]
+    fn test_anthropic_default_model() {
+        assert_eq!(
+            Provider::Anthropic.default_model(),
+            "claude-sonnet-4-20250514"
+        );
+    }
+
+    #[test]
+    fn test_ollama_default_model() {
+        assert_eq!(Provider::Ollama.default_model(), "llama3.2");
+    }
+
+    #[test]
+    fn test_openrouter_default_model() {
+        assert_eq!(Provider::Openrouter.default_model(), "openai/gpt-4o");
+    }
+
+    #[test]
+    fn test_openai_ping_model() {
+        assert_eq!(Provider::Openai.ping_model(), "gpt-4o-mini");
+    }
+
+    #[test]
+    fn test_anthropic_ping_model() {
+        assert_eq!(Provider::Anthropic.ping_model(), "claude-sonnet-4-5");
+    }
+
+    #[test]
+    fn test_ollama_ping_model() {
+        assert_eq!(Provider::Ollama.ping_model(), "llama3.2");
+    }
+
+    #[test]
+    fn test_openrouter_ping_model() {
+        assert_eq!(Provider::Openrouter.ping_model(), "openai/gpt-4o-mini");
+    }
+
+    #[test]
+    fn test_provider_clone() {
+        let provider = Provider::Openai;
+        let cloned = provider.clone();
+        assert!(matches!(cloned, Provider::Openai));
+    }
+
+    #[test]
+    fn test_provider_debug() {
+        let provider = Provider::Anthropic;
+        let debug_str = format!("{:?}", provider);
+        assert_eq!(debug_str, "Anthropic");
     }
 }

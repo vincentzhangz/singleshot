@@ -1,7 +1,6 @@
+use crate::config::MergedConfig;
 use std::fs;
 use std::path::PathBuf;
-
-use crate::config::MergedConfig;
 
 pub struct Report {
     content: String,
@@ -128,5 +127,264 @@ impl Report {
     pub fn save(&self, path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
         fs::write(path, &self.content)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::CliArgs;
+    use crate::provider::Provider;
+    use std::time::Duration;
+
+    fn create_test_config<'a>(provider: &'a Provider) -> MergedConfig<'a> {
+        let args = CliArgs {
+            provider,
+            model: Some("test-model"),
+            base_url: Some("https://api.test.com"),
+            system: Some("System prompt"),
+            temperature: 0.7,
+            max_tokens: Some(1000),
+            max_turns: None,
+            mcp_servers: &[],
+        };
+        MergedConfig::new(None, args)
+    }
+
+    #[test]
+    fn test_report_new() {
+        let report = Report::new();
+        assert!(report.content.is_empty());
+    }
+
+    #[test]
+    fn test_report_generate_contains_header() {
+        let provider = Provider::Openai;
+        let config = create_test_config(&provider);
+        let report = Report::generate(
+            &config,
+            "Test prompt",
+            Some("System"),
+            "Response text",
+            Duration::from_secs(1),
+        );
+
+        assert!(report.content.contains("# Single Shot Test Report"));
+        assert!(report.content.contains("**Generated:**"));
+    }
+
+    #[test]
+    fn test_report_generate_contains_configuration() {
+        let provider = Provider::Openai;
+        let config = create_test_config(&provider);
+        let report = Report::generate(
+            &config,
+            "Test prompt",
+            None,
+            "Response",
+            Duration::from_secs(1),
+        );
+
+        assert!(report.content.contains("## Configuration"));
+        assert!(report.content.contains("**Provider:**"));
+        assert!(report.content.contains("**Model:**"));
+        assert!(report.content.contains("**Temperature:**"));
+    }
+
+    #[test]
+    fn test_report_generate_contains_prompt() {
+        let provider = Provider::Openai;
+        let config = create_test_config(&provider);
+        let report = Report::generate(
+            &config,
+            "My test prompt",
+            None,
+            "Response",
+            Duration::from_secs(1),
+        );
+
+        assert!(report.content.contains("## Prompt"));
+        assert!(report.content.contains("My test prompt"));
+    }
+
+    #[test]
+    fn test_report_generate_contains_system_prompt() {
+        let provider = Provider::Openai;
+        let config = create_test_config(&provider);
+        let report = Report::generate(
+            &config,
+            "Prompt",
+            Some("Be helpful"),
+            "Response",
+            Duration::from_secs(1),
+        );
+
+        assert!(report.content.contains("## System Prompt"));
+        assert!(report.content.contains("Be helpful"));
+    }
+
+    #[test]
+    fn test_report_generate_no_system_prompt_when_none() {
+        let provider = Provider::Openai;
+        let config = create_test_config(&provider);
+        let report = Report::generate(&config, "Prompt", None, "Response", Duration::from_secs(1));
+
+        assert!(!report.content.contains("## System Prompt"));
+    }
+
+    #[test]
+    fn test_report_generate_contains_response() {
+        let provider = Provider::Openai;
+        let config = create_test_config(&provider);
+        let report = Report::generate(
+            &config,
+            "Prompt",
+            None,
+            "This is the AI response",
+            Duration::from_secs(1),
+        );
+
+        assert!(report.content.contains("## Response"));
+        assert!(report.content.contains("This is the AI response"));
+    }
+
+    #[test]
+    fn test_report_generate_contains_performance() {
+        let provider = Provider::Openai;
+        let config = create_test_config(&provider);
+        let report = Report::generate(
+            &config,
+            "Test prompt",
+            None,
+            "Response text",
+            Duration::from_millis(1500),
+        );
+
+        assert!(report.content.contains("## Performance"));
+        assert!(report.content.contains("**Duration:**"));
+        assert!(report.content.contains("**Prompt Length:**"));
+        assert!(report.content.contains("**Response Length:**"));
+        assert!(report.content.contains("**Estimated Prompt Tokens:**"));
+        assert!(report.content.contains("**Estimated Response Tokens:**"));
+    }
+
+    #[test]
+    fn test_report_generate_performance_values() {
+        let provider = Provider::Openai;
+        let config = create_test_config(&provider);
+        let prompt = "word1 word2 word3";
+        let response = "response1 response2";
+        let report = Report::generate(&config, prompt, None, response, Duration::from_secs(2));
+
+        assert!(report.content.contains(&format!("{} chars", prompt.len())));
+        assert!(
+            report
+                .content
+                .contains(&format!("{} chars", response.len()))
+        );
+        assert!(report.content.contains("~3"));
+        assert!(report.content.contains("~2"));
+    }
+
+    #[test]
+    fn test_report_generate_with_media_files() {
+        let mut loaded = crate::config::LoadedConfig::default();
+        loaded.image = Some(PathBuf::from("/path/to/image.jpg"));
+        loaded.video = Some(PathBuf::from("/path/to/video.mp4"));
+        loaded.audio = Some(PathBuf::from("/path/to/audio.mp3"));
+
+        let provider = Provider::Openai;
+        let args = CliArgs {
+            provider: &provider,
+            model: Some("test-model"),
+            base_url: None,
+            system: None,
+            temperature: 0.7,
+            max_tokens: None,
+            max_turns: None,
+            mcp_servers: &[],
+        };
+        let config = MergedConfig::new(Some(&loaded), args);
+
+        let report = Report::generate(&config, "Prompt", None, "Response", Duration::from_secs(1));
+
+        assert!(report.content.contains("## Media Files"));
+        assert!(report.content.contains("**Image:**"));
+        assert!(report.content.contains("**Video:**"));
+        assert!(report.content.contains("**Audio:**"));
+    }
+
+    #[test]
+    fn test_report_generate_no_media_section_when_none() {
+        let provider = Provider::Openai;
+        let config = create_test_config(&provider);
+        let report = Report::generate(&config, "Prompt", None, "Response", Duration::from_secs(1));
+
+        assert!(!report.content.contains("## Media Files"));
+    }
+
+    #[test]
+    fn test_report_generate_with_base_url() {
+        let provider = Provider::Openai;
+        let config = create_test_config(&provider);
+        let report = Report::generate(&config, "Prompt", None, "Response", Duration::from_secs(1));
+
+        assert!(report.content.contains("**Base URL:**"));
+        assert!(report.content.contains("https://api.test.com"));
+    }
+
+    #[test]
+    fn test_report_generate_with_max_tokens() {
+        let provider = Provider::Openai;
+        let config = create_test_config(&provider);
+        let report = Report::generate(&config, "Prompt", None, "Response", Duration::from_secs(1));
+
+        assert!(report.content.contains("**Max Tokens:**"));
+        assert!(report.content.contains("1000"));
+    }
+
+    #[test]
+    fn test_report_save() {
+        let provider = Provider::Openai;
+        let config = create_test_config(&provider);
+        let report = Report::generate(&config, "Prompt", None, "Response", Duration::from_secs(1));
+
+        let temp_dir = std::env::temp_dir();
+        let temp_file = temp_dir.join("test_report.md");
+
+        report.save(&temp_file).unwrap();
+
+        let content = fs::read_to_string(&temp_file).unwrap();
+        assert!(content.contains("# Single Shot Test Report"));
+
+        fs::remove_file(&temp_file).ok();
+    }
+
+    #[test]
+    fn test_report_model_name_uses_config() {
+        let provider = Provider::Openai;
+        let config = create_test_config(&provider);
+        let report = Report::generate(&config, "Prompt", None, "Response", Duration::from_secs(1));
+
+        assert!(report.content.contains("test-model"));
+    }
+
+    #[test]
+    fn test_report_model_name_fallback_to_default() {
+        let provider = Provider::Openai;
+        let args = CliArgs {
+            provider: &provider,
+            model: None,
+            base_url: None,
+            system: None,
+            temperature: 0.7,
+            max_tokens: None,
+            max_turns: None,
+            mcp_servers: &[],
+        };
+        let config = MergedConfig::new(None, args);
+        let report = Report::generate(&config, "Prompt", None, "Response", Duration::from_secs(1));
+
+        assert!(report.content.contains("gpt-4o"));
     }
 }

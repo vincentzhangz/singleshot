@@ -91,3 +91,82 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: cargo publish --no-verify
+
+  homebrew:
+    name: Publish to Homebrew
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout singleshot repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+      - name: Get release info
+        id: release
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Download release artifacts
+        run: |
+          curl -L -o singleshot-x86_64-apple-darwin.tar.gz \
+            "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/singleshot-x86_64-apple-darwin.tar.gz"
+          curl -L -o singleshot-aarch64-apple-darwin.tar.gz \
+            "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/singleshot-aarch64-apple-darwin.tar.gz"
+          curl -L -o singleshot-x86_64-unknown-linux-gnu.tar.gz \
+            "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/singleshot-x86_64-unknown-linux-gnu.tar.gz"
+
+      - name: Calculate SHA256
+        id: sha
+        run: |
+          echo "sha_macos_x86=$(sha256sum singleshot-x86_64-apple-darwin.tar.gz | cut -d ' ' -f 1)" >> $GITHUB_OUTPUT
+          echo "sha_macos_arm=$(sha256sum singleshot-aarch64-apple-darwin.tar.gz | cut -d ' ' -f 1)" >> $GITHUB_OUTPUT
+          echo "sha_linux=$(sha256sum singleshot-x86_64-unknown-linux-gnu.tar.gz | cut -d ' ' -f 1)" >> $GITHUB_OUTPUT
+
+      - name: Update Homebrew formula
+        run: |
+          mkdir -p Formula
+          cat > Formula/singleshot.rb << EOF
+          class Singleshot < Formula
+            desc "A CLI tool for testing AI models with a single prompt"
+            homepage "https://github.com/vincentzhangz/singleshot"
+            version "${{ steps.release.outputs.version }}"
+            license "MIT"
+
+            on_macos do
+              on_arm do
+                url "https://github.com/vincentzhangz/singleshot/releases/download/${{ github.ref_name }}/singleshot-aarch64-apple-darwin.tar.gz"
+                sha256 "${{ steps.sha.outputs.sha_macos_arm }}"
+              end
+              on_intel do
+                url "https://github.com/vincentzhangz/singleshot/releases/download/${{ github.ref_name }}/singleshot-x86_64-apple-darwin.tar.gz"
+                sha256 "${{ steps.sha.outputs.sha_macos_x86 }}"
+              end
+            end
+
+            on_linux do
+              on_intel do
+                url "https://github.com/vincentzhangz/singleshot/releases/download/${{ github.ref_name }}/singleshot-x86_64-unknown-linux-gnu.tar.gz"
+                sha256 "${{ steps.sha.outputs.sha_linux }}"
+              end
+            end
+
+            def install
+              bin.install "singleshot"
+            end
+
+            test do
+              assert_match "singleshot", shell_output("#{bin}/singleshot --version")
+            end
+          end
+          EOF
+
+      - name: Commit and push formula
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/singleshot.rb
+          git diff --cached --quiet || git commit -m "chore: update formula to ${{ steps.release.outputs.version }} [skip ci]"
+          git push

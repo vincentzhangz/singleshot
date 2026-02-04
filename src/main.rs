@@ -1,23 +1,23 @@
 mod chat;
 mod cli;
 mod config;
+mod mcp;
 mod provider;
 mod report;
 mod ui;
 
+use base64::Engine;
+use chat::{ChatConfig, send_prompt};
+use clap::Parser;
+use cli::{Cli, Commands};
+use config::{CliArgs, LoadedConfig, MergedConfig, TEMPLATE};
+use mcp::McpSession;
+use provider::Provider;
+use report::Report;
 use std::fs;
 use std::io::{self, IsTerminal, Read};
 use std::path::PathBuf;
 use std::time::Instant;
-
-use base64::Engine;
-use clap::Parser;
-
-use chat::{ChatConfig, send_prompt};
-use cli::{Cli, Commands};
-use config::{LoadedConfig, MergedConfig, TEMPLATE};
-use provider::Provider;
-use report::Report;
 use ui::{BoxPrinter, completed, newline, status, status_done, status_done_detail};
 
 #[tokio::main]
@@ -45,6 +45,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             system,
             temperature,
             max_tokens,
+            max_turns,
+            mcp_server,
             detail,
             report,
         } => {
@@ -61,6 +63,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 system,
                 temperature,
                 max_tokens,
+                max_turns,
+                mcp_server,
                 detail,
                 report,
             )
@@ -99,19 +103,23 @@ async fn handle_chat(
     cli_system: Option<String>,
     cli_temperature: f64,
     cli_max_tokens: Option<u64>,
+    cli_max_turns: Option<usize>,
+    mcp_servers: Vec<String>,
     detail: bool,
     report: Option<Option<PathBuf>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let loaded = load.as_ref().map(LoadedConfig::from_file).transpose()?;
-    let config = MergedConfig::new(
-        loaded.as_ref(),
-        &cli_provider,
-        cli_model.as_deref(),
-        cli_base_url.as_deref(),
-        cli_system.as_deref(),
-        cli_temperature,
-        cli_max_tokens,
-    );
+    let cli_args = CliArgs {
+        provider: &cli_provider,
+        model: cli_model.as_deref(),
+        base_url: cli_base_url.as_deref(),
+        system: cli_system.as_deref(),
+        temperature: cli_temperature,
+        max_tokens: cli_max_tokens,
+        max_turns: cli_max_turns,
+        mcp_servers: &mcp_servers,
+    };
+    let config = MergedConfig::new(loaded.as_ref(), cli_args);
 
     let prompt_text = resolve_prompt(prompt, file, config.prompt.clone())?;
     let system = config.system.map(String::from);
@@ -126,10 +134,22 @@ async fn handle_chat(
 
     let has_media = image_data.is_some() || video_data.is_some() || audio_data.is_some();
 
+    let mut mcp_sessions: Vec<McpSession> = Vec::new();
+    for server_url in &config.mcp_servers {
+        status(&format!("Connecting to MCP server: {}", server_url));
+        let session = McpSession::connect(server_url).await?;
+        let tool_names = session.tool_names();
+        status_done_detail(
+            "Connected to MCP server",
+            &format!("{} tools: {}", session.tool_count(), tool_names.join(", ")),
+        );
+        mcp_sessions.push(session);
+    }
+
     config.provider.setup_base_url(config.base_url);
 
     if detail {
-        print_config_box(&config, &prompt_text, &system, has_media);
+        print_config_box(&config, &prompt_text, &system, has_media, &mcp_sessions);
     }
 
     status("Sending request...");
@@ -139,9 +159,12 @@ async fn handle_chat(
         .system(system.clone())
         .temperature(config.temperature)
         .max_tokens(config.max_tokens)
+        .max_turns(config.max_turns)
         .image(image_data)
         .video(video_data)
-        .audio(audio_data);
+        .audio(audio_data)
+        .base_url(config.base_url.map(String::from))
+        .mcp_sessions(mcp_sessions);
 
     let response = send_prompt(config.provider, &prompt_text, chat_config).await?;
     let elapsed = start.elapsed();
@@ -202,7 +225,13 @@ fn encode_file_to_base64(path: &PathBuf) -> Result<String, Box<dyn std::error::E
     Ok(base64::engine::general_purpose::STANDARD.encode(&data))
 }
 
-fn print_config_box(config: &MergedConfig, prompt: &str, system: &Option<String>, has_media: bool) {
+fn print_config_box(
+    config: &MergedConfig,
+    prompt: &str,
+    system: &Option<String>,
+    has_media: bool,
+    mcp_sessions: &[McpSession],
+) {
     let printer = BoxPrinter::new(60);
 
     printer.print_top();
@@ -213,8 +242,17 @@ fn print_config_box(config: &MergedConfig, prompt: &str, system: &Option<String>
     if let Some(tokens) = config.max_tokens {
         printer.print_line(&format!("Max Tokens:  {}", tokens));
     }
+    printer.print_line(&format!("Max Turns:   {}", config.max_turns));
     if has_media {
         printer.print_line("Media:       attached");
+    }
+    if !mcp_sessions.is_empty() {
+        let total_tools: usize = mcp_sessions.iter().map(|s| s.tool_count()).sum();
+        printer.print_line(&format!(
+            "MCP Servers: {} ({} tools)",
+            mcp_sessions.len(),
+            total_tools
+        ));
     }
 
     printer.print_separator();
@@ -260,7 +298,9 @@ async fn handle_ping(
     status(&format!("Pinging {:?}...", provider));
     let start = Instant::now();
 
-    let chat_config = ChatConfig::new(provider.ping_model()).max_tokens(Some(10));
+    let chat_config = ChatConfig::new(provider.ping_model())
+        .max_tokens(Some(10))
+        .base_url(base_url.map(String::from));
     let _ = send_prompt(provider, "Say 'pong'", chat_config).await?;
 
     let elapsed = start.elapsed();

@@ -13,17 +13,6 @@ impl BoxPrinter {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn from_lines(lines: &[String], title: &str) -> Self {
-        let max_width = lines
-            .iter()
-            .map(|l| l.len())
-            .max()
-            .unwrap_or(BOX_MIN_WIDTH)
-            .max(title.len());
-        Self::new(max_width)
-    }
-
     pub fn print_top(&self) {
         eprintln!("╭{}╮", "─".repeat(self.width - 2));
     }
@@ -39,17 +28,6 @@ impl BoxPrinter {
     pub fn print_bottom(&self) {
         eprintln!("╰{}╯", "─".repeat(self.width - 2));
     }
-
-    #[allow(dead_code)]
-    pub fn print_box(&self, title: &str, lines: &[String]) {
-        self.print_top();
-        self.print_line(title);
-        self.print_separator();
-        for line in lines {
-            self.print_line(line);
-        }
-        self.print_bottom();
-    }
 }
 
 pub fn status(message: &str) {
@@ -58,11 +36,11 @@ pub fn status(message: &str) {
 }
 
 pub fn status_done(message: &str) {
-    eprintln!("\r[+] {}", message);
+    eprintln!("\r[+] {}\x1b[K", message);
 }
 
 pub fn status_done_detail(message: &str, detail: &str) {
-    eprintln!("\r[+] {} ({})", message, detail);
+    eprintln!("\r[+] {} ({})\x1b[K", message, detail);
 }
 
 pub fn newline() {
@@ -71,4 +49,41 @@ pub fn newline() {
 
 pub fn completed(message: &str) {
     eprintln!("[+] {}", message);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_box_printer_new_minimum_width() {
+        let printer = BoxPrinter::new(10);
+        assert_eq!(printer.width, BOX_MIN_WIDTH + 4);
+    }
+
+    #[test]
+    fn test_box_printer_new_larger_width() {
+        let printer = BoxPrinter::new(50);
+        assert_eq!(printer.width, 54);
+    }
+
+    #[test]
+    fn test_box_min_width_constant() {
+        assert_eq!(BOX_MIN_WIDTH, 40);
+    }
+
+    #[test]
+    fn test_box_printer_width_calculation() {
+        let printer1 = BoxPrinter::new(0);
+        assert_eq!(printer1.width, 44);
+
+        let printer2 = BoxPrinter::new(39);
+        assert_eq!(printer2.width, 44);
+
+        let printer3 = BoxPrinter::new(40);
+        assert_eq!(printer3.width, 44);
+
+        let printer4 = BoxPrinter::new(41);
+        assert_eq!(printer4.width, 45);
+    }
 }
