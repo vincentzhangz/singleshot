@@ -30,6 +30,7 @@ pub struct ChatConfig {
     pub audio: Option<String>,
     pub base_url: Option<String>,
     pub mcp_sessions: Vec<McpSession>,
+    pub max_turns: usize,
 }
 
 impl ChatConfig {
@@ -37,6 +38,7 @@ impl ChatConfig {
         Self {
             model: model.into(),
             temperature: 0.7,
+            max_turns: 10,
             ..Default::default()
         }
     }
@@ -78,6 +80,11 @@ impl ChatConfig {
 
     pub fn mcp_sessions(mut self, sessions: Vec<McpSession>) -> Self {
         self.mcp_sessions = sessions;
+        self
+    }
+
+    pub fn max_turns(mut self, turns: usize) -> Self {
+        self.max_turns = turns;
         self
     }
 
@@ -137,13 +144,23 @@ async fn send_with_mcp(
 
     status("Sending request...");
 
+    let tool_names: Vec<String> = config
+        .mcp_sessions
+        .iter()
+        .flat_map(|s| s.tools.iter().map(|t| t.name.to_string()))
+        .collect();
+    let tool_hint = format!(
+        "\nYou have access to the following tools: {}.\nIf the user asks for something that requires these tools, you MUST use them.",
+        tool_names.join(", ")
+    );
+
     macro_rules! build_agent_with_tools {
         ($client:expr, $tool_server_handle:expr, $called_tools:expr) => {{
             let mut builder = $client.agent(&config.model).temperature(config.temperature);
 
-            if let Some(sys) = &config.system {
-                builder = builder.preamble(sys);
-            }
+            let mut preamble = config.system.clone().unwrap_or_default();
+            preamble.push_str(&tool_hint);
+            builder = builder.preamble(&preamble);
             if let Some(tokens) = config.max_tokens {
                 builder = builder.max_tokens(tokens);
             }
@@ -151,7 +168,7 @@ async fn send_with_mcp(
             let result: Result<String, Box<dyn std::error::Error>> = {
                 let agent = builder.tool_server_handle($tool_server_handle).build();
 
-                let response = agent.prompt(prompt).multi_turn(3).await?;
+                let response = agent.prompt(prompt).max_turns(config.max_turns).await?;
 
                 let tools_used = $called_tools.lock().await;
                 if !tools_used.is_empty() {

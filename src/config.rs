@@ -15,6 +15,8 @@ pub struct LoadedConfig {
     pub temperature: Option<f64>,
     pub max_tokens: Option<u64>,
     pub base_url: Option<String>,
+    pub max_turns: Option<usize>,
+    pub mcp_servers: Option<Vec<String>>,
 }
 
 impl LoadedConfig {
@@ -74,6 +76,16 @@ impl LoadedConfig {
             }
             "temperature" => self.temperature = value.parse().ok(),
             "max_tokens" => self.max_tokens = value.parse().ok(),
+            "max_turns" => self.max_turns = value.parse().ok(),
+            "mcp" => {
+                self.mcp_servers = Some(
+                    value
+                        .lines()
+                        .map(|line| line.trim().to_string())
+                        .filter(|line| !line.is_empty())
+                        .collect(),
+                );
+            }
             _ => {}
         }
     }
@@ -91,7 +103,9 @@ pub struct MergedConfig<'a> {
     pub model: Option<&'a str>,
     pub temperature: f64,
     pub max_tokens: Option<u64>,
+    pub max_turns: usize,
     pub base_url: Option<&'a str>,
+    pub mcp_servers: Vec<String>,
 }
 
 impl<'a> MergedConfig<'a> {
@@ -103,8 +117,14 @@ impl<'a> MergedConfig<'a> {
         cli_system: Option<&'a str>,
         cli_temperature: f64,
         cli_max_tokens: Option<u64>,
+        cli_max_turns: Option<usize>,
+        cli_mcp_servers: &[String],
     ) -> Self {
+        let mut mcp_servers = cli_mcp_servers.to_vec();
         if let Some(cfg) = loaded {
+            if let Some(cfg_servers) = &cfg.mcp_servers {
+                mcp_servers.extend(cfg_servers.clone());
+            }
             Self {
                 prompt: cfg.prompt.clone(),
                 file: cfg.file.clone(),
@@ -116,7 +136,9 @@ impl<'a> MergedConfig<'a> {
                 model: cfg.model.as_deref().or(cli_model),
                 temperature: cfg.temperature.unwrap_or(cli_temperature),
                 max_tokens: cfg.max_tokens.or(cli_max_tokens),
+                max_turns: cfg.max_turns.or(cli_max_turns).unwrap_or(10),
                 base_url: cfg.base_url.as_deref().or(cli_base_url),
+                mcp_servers,
             }
         } else {
             Self {
@@ -130,7 +152,9 @@ impl<'a> MergedConfig<'a> {
                 model: cli_model,
                 temperature: cli_temperature,
                 max_tokens: cli_max_tokens,
+                max_turns: cli_max_turns.unwrap_or(10),
                 base_url: cli_base_url,
+                mcp_servers,
             }
         }
     }
@@ -161,6 +185,13 @@ https://api.openai.com/v1
 
 ---max_tokens---
 1024
+
+---max_turns---
+10
+
+---mcp---
+http://localhost:8080
+http://localhost:8081
 
 ---system---
 You are a helpful AI assistant.
@@ -277,6 +308,25 @@ mod tests {
     }
 
     #[test]
+    fn test_loaded_config_parse_max_turns() {
+        let content = "---max_turns---\n20";
+        let file = create_temp_config(content);
+        let config = LoadedConfig::from_file(&file.path().to_path_buf()).unwrap();
+        assert_eq!(config.max_turns, Some(20));
+    }
+
+    #[test]
+    fn test_loaded_config_parse_mcp_servers() {
+        let content = "---mcp---\nhttp://localhost:8080\nhttp://localhost:8081\n\n";
+        let file = create_temp_config(content);
+        let config = LoadedConfig::from_file(&file.path().to_path_buf()).unwrap();
+        let servers = config.mcp_servers.unwrap();
+        assert_eq!(servers.len(), 2);
+        assert_eq!(servers[0], "http://localhost:8080");
+        assert_eq!(servers[1], "http://localhost:8081");
+    }
+
+    #[test]
     fn test_loaded_config_parse_model() {
         let content = "---model---\ngpt-4-turbo";
         let file = create_temp_config(content);
@@ -371,6 +421,8 @@ Line 3"#;
             Some("System prompt"),
             0.9,
             Some(500),
+            None,
+            &[],
         );
 
         assert_eq!(merged.model, Some("gpt-4"));
@@ -378,6 +430,7 @@ Line 3"#;
         assert_eq!(merged.system, Some("System prompt"));
         assert_eq!(merged.temperature, 0.9);
         assert_eq!(merged.max_tokens, Some(500));
+        assert_eq!(merged.max_turns, 10);
         assert!(matches!(merged.provider, Provider::Openai));
     }
 
@@ -397,6 +450,8 @@ Line 3"#;
             None,
             0.7,
             None,
+            None,
+            &[],
         );
 
         assert_eq!(merged.model, Some("claude-sonnet-4-20250514"));
@@ -417,6 +472,8 @@ Line 3"#;
             Some("Be helpful"),
             0.6,
             Some(1000),
+            Some(15),
+            &[],
         );
 
         assert_eq!(merged.model, Some("gemma3"));
@@ -424,27 +481,37 @@ Line 3"#;
         assert_eq!(merged.system, Some("Be helpful"));
         assert_eq!(merged.temperature, 0.6);
         assert_eq!(merged.max_tokens, Some(1000));
+        assert_eq!(merged.max_turns, 15);
     }
 
     #[test]
     fn test_merged_config_model_name_with_model() {
         let provider = Provider::Openai;
-        let merged =
-            MergedConfig::new(None, &provider, Some("custom-model"), None, None, 0.7, None);
+        let merged = MergedConfig::new(
+            None,
+            &provider,
+            Some("custom-model"),
+            None,
+            None,
+            0.7,
+            None,
+            None,
+            &[],
+        );
         assert_eq!(merged.model_name(), "custom-model");
     }
 
     #[test]
     fn test_merged_config_model_name_default_fallback() {
         let provider = Provider::Openai;
-        let merged = MergedConfig::new(None, &provider, None, None, None, 0.7, None);
+        let merged = MergedConfig::new(None, &provider, None, None, None, 0.7, None, None, &[]);
         assert_eq!(merged.model_name(), "gpt-4o");
     }
 
     #[test]
     fn test_merged_config_has_media_false() {
         let provider = Provider::Openai;
-        let merged = MergedConfig::new(None, &provider, None, None, None, 0.7, None);
+        let merged = MergedConfig::new(None, &provider, None, None, None, 0.7, None, None, &[]);
         assert!(!merged.has_media());
     }
 
@@ -454,7 +521,17 @@ Line 3"#;
         loaded.image = Some(PathBuf::from("/path/to/image.jpg"));
 
         let provider = Provider::Openai;
-        let merged = MergedConfig::new(Some(&loaded), &provider, None, None, None, 0.7, None);
+        let merged = MergedConfig::new(
+            Some(&loaded),
+            &provider,
+            None,
+            None,
+            None,
+            0.7,
+            None,
+            None,
+            &[],
+        );
         assert!(merged.has_media());
     }
 
@@ -464,7 +541,17 @@ Line 3"#;
         loaded.video = Some(PathBuf::from("/path/to/video.mp4"));
 
         let provider = Provider::Openai;
-        let merged = MergedConfig::new(Some(&loaded), &provider, None, None, None, 0.7, None);
+        let merged = MergedConfig::new(
+            Some(&loaded),
+            &provider,
+            None,
+            None,
+            None,
+            0.7,
+            None,
+            None,
+            &[],
+        );
         assert!(merged.has_media());
     }
 
@@ -474,7 +561,17 @@ Line 3"#;
         loaded.audio = Some(PathBuf::from("/path/to/audio.mp3"));
 
         let provider = Provider::Openai;
-        let merged = MergedConfig::new(Some(&loaded), &provider, None, None, None, 0.7, None);
+        let merged = MergedConfig::new(
+            Some(&loaded),
+            &provider,
+            None,
+            None,
+            None,
+            0.7,
+            None,
+            None,
+            &[],
+        );
         assert!(merged.has_media());
     }
 
@@ -485,6 +582,8 @@ Line 3"#;
         assert!(TEMPLATE.contains("---base_url---"));
         assert!(TEMPLATE.contains("---temperature---"));
         assert!(TEMPLATE.contains("---max_tokens---"));
+        assert!(TEMPLATE.contains("---max_turns---"));
+        assert!(TEMPLATE.contains("---mcp---"));
         assert!(TEMPLATE.contains("---system---"));
         assert!(TEMPLATE.contains("---prompt---"));
         assert!(TEMPLATE.contains("---file---"));

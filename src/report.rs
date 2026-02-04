@@ -145,6 +145,8 @@ mod tests {
             Some("System prompt"),
             0.7,
             Some(1000),
+            None,
+            &[],
         )
     }
 
@@ -299,6 +301,8 @@ mod tests {
             None,
             0.7,
             None,
+            None,
+            &[],
         );
 
         let report = Report::generate(&config, "Prompt", None, "Response", Duration::from_secs(1));
@@ -367,7 +371,7 @@ mod tests {
     #[test]
     fn test_report_model_name_fallback_to_default() {
         let provider = Provider::Openai;
-        let config = MergedConfig::new(None, &provider, None, None, None, 0.7, None);
+        let config = MergedConfig::new(None, &provider, None, None, None, 0.7, None, None, &[]);
         let report = Report::generate(&config, "Prompt", None, "Response", Duration::from_secs(1));
 
         assert!(report.content.contains("gpt-4o"));

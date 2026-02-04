@@ -1,6 +1,6 @@
 use rig::completion::ToolDefinition;
 use rig::tool::{ToolDyn, ToolError};
-use rmcp::model::{ClientCapabilities, ClientInfo, Implementation, InitializeRequestParam, Tool};
+use rmcp::model::{ClientCapabilities, ClientInfo, Implementation, InitializeRequestParams, Tool};
 use rmcp::service::{RunningService, ServerSink};
 use rmcp::transport::StreamableHttpClientTransport;
 use rmcp::{RoleClient, ServiceExt};
@@ -71,7 +71,12 @@ impl ToolDyn for LoggingMcpTool {
 
             let result = self
                 .client
-                .call_tool(rmcp::model::CallToolRequestParam { name, arguments })
+                .call_tool(rmcp::model::CallToolRequestParams {
+                    name,
+                    arguments,
+                    meta: None,
+                    task: None,
+                })
                 .await
                 .map_err(|e| {
                     ToolError::ToolCallError(Box::new(std::io::Error::other(format!(
@@ -102,7 +107,7 @@ impl ToolDyn for LoggingMcpTool {
 }
 
 pub struct McpClient {
-    client: RunningService<RoleClient, InitializeRequestParam>,
+    client: RunningService<RoleClient, InitializeRequestParams>,
 }
 
 impl McpClient {
@@ -117,6 +122,7 @@ impl McpClient {
                 version: env!("CARGO_PKG_VERSION").to_string(),
                 ..Default::default()
             },
+            meta: None,
         };
 
         let client = client_info

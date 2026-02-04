@@ -72,6 +72,7 @@ singleshot chat -p "What's in this image?" -P openai -i photo.jpg
 -s, --system <SYSTEM>        System prompt
 -t, --temperature <TEMP>     Temperature (0.0-2.0) [default: 0.7]
     --max-tokens <TOKENS>    Maximum tokens in response
+    --max-turns <TURNS>      Maximum tool call turns (default: 10)
     --mcp <URL>              MCP server URL(s) - can be specified multiple times
 -d, --detail                 Show detailed information
 -r, --report [<FILE>]        Generate report file
@@ -144,6 +145,13 @@ path/to/video.mp4
 
 ---audio---
 path/to/audio.mp3
+
+---max_turns---
+10
+
+---mcp---
+http://localhost:8080
+http://localhost:8081
 ```
 
 All sections are optional. Only include what you need.
@@ -216,7 +224,9 @@ MCP tools enable the AI to perform actions like:
 - Access external APIs
 - And more, depending on the MCP server capabilities
 
-The `--mcp` flag accepts any MCP server URL that implements the [Streamable HTTP transport](https://modelcontextprotocol.io/specification/basic/transports). You can specify `--mcp` multiple times to connect to multiple servers.
+The `--mcp` flag accepts any MCP server URL that implements the [Streamable HTTP transport](https://modelcontextprotocol.io/specification/basic/transports). You can specify `--mcp` multiple times to connect to multiple servers. You can also list MCP servers in your config file under the `---mcp---` section.
+
+Singleshot automatically hints to the model about the available tools to ensure they are used when relevant. The maximum number of tool execution turns defaults to 10 but can be configured via `--max-turns` or the `---max_turns---` config section.
 
 ## Environment Variables
 

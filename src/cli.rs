@@ -56,6 +56,9 @@ pub enum Commands {
         #[arg(long, help = "Maximum tokens in response")]
         max_tokens: Option<u64>,
 
+        #[arg(long, help = "Maximum tool call turns (default: 10)")]
+        max_turns: Option<usize>,
+
         #[arg(
             long = "mcp",
             help = "MCP server URL(s) - can be specified multiple times (e.g., --mcp http://localhost:8080 --mcp http://localhost:8081)"

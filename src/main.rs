@@ -45,6 +45,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             system,
             temperature,
             max_tokens,
+            max_turns,
             mcp_server,
             detail,
             report,
@@ -62,6 +63,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 system,
                 temperature,
                 max_tokens,
+                max_turns,
                 mcp_server,
                 detail,
                 report,
@@ -101,6 +103,7 @@ async fn handle_chat(
     cli_system: Option<String>,
     cli_temperature: f64,
     cli_max_tokens: Option<u64>,
+    cli_max_turns: Option<usize>,
     mcp_servers: Vec<String>,
     detail: bool,
     report: Option<Option<PathBuf>>,
@@ -114,6 +117,8 @@ async fn handle_chat(
         cli_system.as_deref(),
         cli_temperature,
         cli_max_tokens,
+        cli_max_turns,
+        &mcp_servers,
     );
 
     let prompt_text = resolve_prompt(prompt, file, config.prompt.clone())?;
@@ -130,7 +135,7 @@ async fn handle_chat(
     let has_media = image_data.is_some() || video_data.is_some() || audio_data.is_some();
 
     let mut mcp_sessions: Vec<McpSession> = Vec::new();
-    for server_url in &mcp_servers {
+    for server_url in &config.mcp_servers {
         status(&format!("Connecting to MCP server: {}", server_url));
         let session = McpSession::connect(server_url).await?;
         let tool_names = session.tool_names();
@@ -154,6 +159,7 @@ async fn handle_chat(
         .system(system.clone())
         .temperature(config.temperature)
         .max_tokens(config.max_tokens)
+        .max_turns(config.max_turns)
         .image(image_data)
         .video(video_data)
         .audio(audio_data)
@@ -236,6 +242,7 @@ fn print_config_box(
     if let Some(tokens) = config.max_tokens {
         printer.print_line(&format!("Max Tokens:  {}", tokens));
     }
+    printer.print_line(&format!("Max Turns:   {}", config.max_turns));
     if has_media {
         printer.print_line("Media:       attached");
     }
