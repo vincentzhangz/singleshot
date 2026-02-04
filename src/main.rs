@@ -10,7 +10,7 @@ use base64::Engine;
 use chat::{ChatConfig, send_prompt};
 use clap::Parser;
 use cli::{Cli, Commands};
-use config::{LoadedConfig, MergedConfig, TEMPLATE};
+use config::{CliArgs, LoadedConfig, MergedConfig, TEMPLATE};
 use mcp::McpSession;
 use provider::Provider;
 use report::Report;
@@ -109,17 +109,17 @@ async fn handle_chat(
     report: Option<Option<PathBuf>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let loaded = load.as_ref().map(LoadedConfig::from_file).transpose()?;
-    let config = MergedConfig::new(
-        loaded.as_ref(),
-        &cli_provider,
-        cli_model.as_deref(),
-        cli_base_url.as_deref(),
-        cli_system.as_deref(),
-        cli_temperature,
-        cli_max_tokens,
-        cli_max_turns,
-        &mcp_servers,
-    );
+    let cli_args = CliArgs {
+        provider: &cli_provider,
+        model: cli_model.as_deref(),
+        base_url: cli_base_url.as_deref(),
+        system: cli_system.as_deref(),
+        temperature: cli_temperature,
+        max_tokens: cli_max_tokens,
+        max_turns: cli_max_turns,
+        mcp_servers: &mcp_servers,
+    };
+    let config = MergedConfig::new(loaded.as_ref(), cli_args);
 
     let prompt_text = resolve_prompt(prompt, file, config.prompt.clone())?;
     let system = config.system.map(String::from);

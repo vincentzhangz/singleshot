@@ -81,7 +81,11 @@ impl LoadedConfig {
                 self.mcp_servers = Some(
                     value
                         .lines()
-                        .map(|line| line.trim().to_string())
+                        .map(|line| {
+                            line.trim()
+                                .trim_matches(|c| c == '<' || c == '>')
+                                .to_string()
+                        })
                         .filter(|line| !line.is_empty())
                         .collect(),
                 );
@@ -108,19 +112,20 @@ pub struct MergedConfig<'a> {
     pub mcp_servers: Vec<String>,
 }
 
+pub struct CliArgs<'a> {
+    pub provider: &'a Provider,
+    pub model: Option<&'a str>,
+    pub base_url: Option<&'a str>,
+    pub system: Option<&'a str>,
+    pub temperature: f64,
+    pub max_tokens: Option<u64>,
+    pub max_turns: Option<usize>,
+    pub mcp_servers: &'a [String],
+}
+
 impl<'a> MergedConfig<'a> {
-    pub fn new(
-        loaded: Option<&'a LoadedConfig>,
-        cli_provider: &'a Provider,
-        cli_model: Option<&'a str>,
-        cli_base_url: Option<&'a str>,
-        cli_system: Option<&'a str>,
-        cli_temperature: f64,
-        cli_max_tokens: Option<u64>,
-        cli_max_turns: Option<usize>,
-        cli_mcp_servers: &[String],
-    ) -> Self {
-        let mut mcp_servers = cli_mcp_servers.to_vec();
+    pub fn new(loaded: Option<&'a LoadedConfig>, args: CliArgs<'a>) -> Self {
+        let mut mcp_servers = args.mcp_servers.to_vec();
         if let Some(cfg) = loaded {
             if let Some(cfg_servers) = &cfg.mcp_servers {
                 mcp_servers.extend(cfg_servers.clone());
@@ -128,32 +133,32 @@ impl<'a> MergedConfig<'a> {
             Self {
                 prompt: cfg.prompt.clone(),
                 file: cfg.file.clone(),
-                system: cfg.system.as_deref().or(cli_system),
+                system: cfg.system.as_deref().or(args.system),
                 image: cfg.image.clone(),
                 video: cfg.video.clone(),
                 audio: cfg.audio.clone(),
-                provider: cfg.provider.as_ref().unwrap_or(cli_provider),
-                model: cfg.model.as_deref().or(cli_model),
-                temperature: cfg.temperature.unwrap_or(cli_temperature),
-                max_tokens: cfg.max_tokens.or(cli_max_tokens),
-                max_turns: cfg.max_turns.or(cli_max_turns).unwrap_or(10),
-                base_url: cfg.base_url.as_deref().or(cli_base_url),
+                provider: cfg.provider.as_ref().unwrap_or(args.provider),
+                model: cfg.model.as_deref().or(args.model),
+                temperature: cfg.temperature.unwrap_or(args.temperature),
+                max_tokens: cfg.max_tokens.or(args.max_tokens),
+                max_turns: cfg.max_turns.or(args.max_turns).unwrap_or(10),
+                base_url: cfg.base_url.as_deref().or(args.base_url),
                 mcp_servers,
             }
         } else {
             Self {
                 prompt: None,
                 file: None,
-                system: cli_system,
+                system: args.system,
                 image: None,
                 video: None,
                 audio: None,
-                provider: cli_provider,
-                model: cli_model,
-                temperature: cli_temperature,
-                max_tokens: cli_max_tokens,
-                max_turns: cli_max_turns.unwrap_or(10),
-                base_url: cli_base_url,
+                provider: args.provider,
+                model: args.model,
+                temperature: args.temperature,
+                max_tokens: args.max_tokens,
+                max_turns: args.max_turns.unwrap_or(10),
+                base_url: args.base_url,
                 mcp_servers,
             }
         }
@@ -317,13 +322,13 @@ mod tests {
 
     #[test]
     fn test_loaded_config_parse_mcp_servers() {
-        let content = "---mcp---\nhttp://localhost:8080\nhttp://localhost:8081\n\n";
+        let content = "---mcp---\nhttp://localhost:8080\n<https://example.com/mcp>\n\n";
         let file = create_temp_config(content);
         let config = LoadedConfig::from_file(&file.path().to_path_buf()).unwrap();
         let servers = config.mcp_servers.unwrap();
         assert_eq!(servers.len(), 2);
         assert_eq!(servers[0], "http://localhost:8080");
-        assert_eq!(servers[1], "http://localhost:8081");
+        assert_eq!(servers[1], "https://example.com/mcp");
     }
 
     #[test]
@@ -413,17 +418,17 @@ Line 3"#;
     #[test]
     fn test_merged_config_without_loaded() {
         let provider = Provider::Openai;
-        let merged = MergedConfig::new(
-            None,
-            &provider,
-            Some("gpt-4"),
-            Some("https://api.example.com"),
-            Some("System prompt"),
-            0.9,
-            Some(500),
-            None,
-            &[],
-        );
+        let args = CliArgs {
+            provider: &provider,
+            model: Some("gpt-4"),
+            base_url: Some("https://api.example.com"),
+            system: Some("System prompt"),
+            temperature: 0.9,
+            max_tokens: Some(500),
+            max_turns: None,
+            mcp_servers: &[],
+        };
+        let merged = MergedConfig::new(None, args);
 
         assert_eq!(merged.model, Some("gpt-4"));
         assert_eq!(merged.base_url, Some("https://api.example.com"));
@@ -442,17 +447,17 @@ Line 3"#;
         loaded.provider = Some(Provider::Anthropic);
 
         let cli_provider = Provider::Openai;
-        let merged = MergedConfig::new(
-            Some(&loaded),
-            &cli_provider,
-            Some("gpt-4"),
-            None,
-            None,
-            0.7,
-            None,
-            None,
-            &[],
-        );
+        let args = CliArgs {
+            provider: &cli_provider,
+            model: Some("gpt-4"),
+            base_url: None,
+            system: None,
+            temperature: 0.7,
+            max_tokens: None,
+            max_turns: None,
+            mcp_servers: &[],
+        };
+        let merged = MergedConfig::new(Some(&loaded), args);
 
         assert_eq!(merged.model, Some("claude-sonnet-4-20250514"));
         assert_eq!(merged.temperature, 0.5);
@@ -464,17 +469,17 @@ Line 3"#;
         let loaded = LoadedConfig::default();
 
         let cli_provider = Provider::Ollama;
-        let merged = MergedConfig::new(
-            Some(&loaded),
-            &cli_provider,
-            Some("gemma3"),
-            Some("http://localhost:11434"),
-            Some("Be helpful"),
-            0.6,
-            Some(1000),
-            Some(15),
-            &[],
-        );
+        let args = CliArgs {
+            provider: &cli_provider,
+            model: Some("gemma3"),
+            base_url: Some("http://localhost:11434"),
+            system: Some("Be helpful"),
+            temperature: 0.6,
+            max_tokens: Some(1000),
+            max_turns: Some(15),
+            mcp_servers: &[],
+        };
+        let merged = MergedConfig::new(Some(&loaded), args);
 
         assert_eq!(merged.model, Some("gemma3"));
         assert_eq!(merged.base_url, Some("http://localhost:11434"));
@@ -487,31 +492,51 @@ Line 3"#;
     #[test]
     fn test_merged_config_model_name_with_model() {
         let provider = Provider::Openai;
-        let merged = MergedConfig::new(
-            None,
-            &provider,
-            Some("custom-model"),
-            None,
-            None,
-            0.7,
-            None,
-            None,
-            &[],
-        );
+        let args = CliArgs {
+            provider: &provider,
+            model: Some("custom-model"),
+            base_url: None,
+            system: None,
+            temperature: 0.7,
+            max_tokens: None,
+            max_turns: None,
+            mcp_servers: &[],
+        };
+        let merged = MergedConfig::new(None, args);
         assert_eq!(merged.model_name(), "custom-model");
     }
 
     #[test]
     fn test_merged_config_model_name_default_fallback() {
         let provider = Provider::Openai;
-        let merged = MergedConfig::new(None, &provider, None, None, None, 0.7, None, None, &[]);
+        let args = CliArgs {
+            provider: &provider,
+            model: None,
+            base_url: None,
+            system: None,
+            temperature: 0.7,
+            max_tokens: None,
+            max_turns: None,
+            mcp_servers: &[],
+        };
+        let merged = MergedConfig::new(None, args);
         assert_eq!(merged.model_name(), "gpt-4o");
     }
 
     #[test]
     fn test_merged_config_has_media_false() {
         let provider = Provider::Openai;
-        let merged = MergedConfig::new(None, &provider, None, None, None, 0.7, None, None, &[]);
+        let args = CliArgs {
+            provider: &provider,
+            model: None,
+            base_url: None,
+            system: None,
+            temperature: 0.7,
+            max_tokens: None,
+            max_turns: None,
+            mcp_servers: &[],
+        };
+        let merged = MergedConfig::new(None, args);
         assert!(!merged.has_media());
     }
 
@@ -521,17 +546,17 @@ Line 3"#;
         loaded.image = Some(PathBuf::from("/path/to/image.jpg"));
 
         let provider = Provider::Openai;
-        let merged = MergedConfig::new(
-            Some(&loaded),
-            &provider,
-            None,
-            None,
-            None,
-            0.7,
-            None,
-            None,
-            &[],
-        );
+        let args = CliArgs {
+            provider: &provider,
+            model: None,
+            base_url: None,
+            system: None,
+            temperature: 0.7,
+            max_tokens: None,
+            max_turns: None,
+            mcp_servers: &[],
+        };
+        let merged = MergedConfig::new(Some(&loaded), args);
         assert!(merged.has_media());
     }
 
@@ -541,17 +566,17 @@ Line 3"#;
         loaded.video = Some(PathBuf::from("/path/to/video.mp4"));
 
         let provider = Provider::Openai;
-        let merged = MergedConfig::new(
-            Some(&loaded),
-            &provider,
-            None,
-            None,
-            None,
-            0.7,
-            None,
-            None,
-            &[],
-        );
+        let args = CliArgs {
+            provider: &provider,
+            model: None,
+            base_url: None,
+            system: None,
+            temperature: 0.7,
+            max_tokens: None,
+            max_turns: None,
+            mcp_servers: &[],
+        };
+        let merged = MergedConfig::new(Some(&loaded), args);
         assert!(merged.has_media());
     }
 
@@ -561,18 +586,50 @@ Line 3"#;
         loaded.audio = Some(PathBuf::from("/path/to/audio.mp3"));
 
         let provider = Provider::Openai;
-        let merged = MergedConfig::new(
-            Some(&loaded),
-            &provider,
-            None,
-            None,
-            None,
-            0.7,
-            None,
-            None,
-            &[],
-        );
+        let args = CliArgs {
+            provider: &provider,
+            model: None,
+            base_url: None,
+            system: None,
+            temperature: 0.7,
+            max_tokens: None,
+            max_turns: None,
+            mcp_servers: &[],
+        };
+        let merged = MergedConfig::new(Some(&loaded), args);
         assert!(merged.has_media());
+    }
+
+    #[test]
+    fn test_merged_config_merge_mcp_servers() {
+        let mut loaded = LoadedConfig::default();
+        loaded.mcp_servers = Some(vec!["http://config-server".to_string()]);
+
+        let provider = Provider::Openai;
+        let cli_servers = vec!["http://cli-server".to_string()];
+        let args = CliArgs {
+            provider: &provider,
+            model: None,
+            base_url: None,
+            system: None,
+            temperature: 0.7,
+            max_tokens: None,
+            max_turns: None,
+            mcp_servers: &cli_servers,
+        };
+        let merged = MergedConfig::new(Some(&loaded), args);
+
+        assert_eq!(merged.mcp_servers.len(), 2);
+        assert!(
+            merged
+                .mcp_servers
+                .contains(&"http://cli-server".to_string())
+        );
+        assert!(
+            merged
+                .mcp_servers
+                .contains(&"http://config-server".to_string())
+        );
     }
 
     #[test]

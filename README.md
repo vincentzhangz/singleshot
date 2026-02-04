@@ -162,6 +162,8 @@ Then run:
 singleshot chat -l config.md
 ```
 
+You can find more example configurations in the `examples/config` directory, such as `examples/config/rust-wiki.md` which demonstrates using MCP servers.
+
 ### Generate a report
 
 ```bash

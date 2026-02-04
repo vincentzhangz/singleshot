@@ -133,21 +133,22 @@ impl Report {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::CliArgs;
     use crate::provider::Provider;
     use std::time::Duration;
 
     fn create_test_config<'a>(provider: &'a Provider) -> MergedConfig<'a> {
-        MergedConfig::new(
-            None,
+        let args = CliArgs {
             provider,
-            Some("test-model"),
-            Some("https://api.test.com"),
-            Some("System prompt"),
-            0.7,
-            Some(1000),
-            None,
-            &[],
-        )
+            model: Some("test-model"),
+            base_url: Some("https://api.test.com"),
+            system: Some("System prompt"),
+            temperature: 0.7,
+            max_tokens: Some(1000),
+            max_turns: None,
+            mcp_servers: &[],
+        };
+        MergedConfig::new(None, args)
     }
 
     #[test]
@@ -293,17 +294,17 @@ mod tests {
         loaded.audio = Some(PathBuf::from("/path/to/audio.mp3"));
 
         let provider = Provider::Openai;
-        let config = MergedConfig::new(
-            Some(&loaded),
-            &provider,
-            Some("test-model"),
-            None,
-            None,
-            0.7,
-            None,
-            None,
-            &[],
-        );
+        let args = CliArgs {
+            provider: &provider,
+            model: Some("test-model"),
+            base_url: None,
+            system: None,
+            temperature: 0.7,
+            max_tokens: None,
+            max_turns: None,
+            mcp_servers: &[],
+        };
+        let config = MergedConfig::new(Some(&loaded), args);
 
         let report = Report::generate(&config, "Prompt", None, "Response", Duration::from_secs(1));
 
@@ -371,7 +372,17 @@ mod tests {
     #[test]
     fn test_report_model_name_fallback_to_default() {
         let provider = Provider::Openai;
-        let config = MergedConfig::new(None, &provider, None, None, None, 0.7, None, None, &[]);
+        let args = CliArgs {
+            provider: &provider,
+            model: None,
+            base_url: None,
+            system: None,
+            temperature: 0.7,
+            max_tokens: None,
+            max_turns: None,
+            mcp_servers: &[],
+        };
+        let config = MergedConfig::new(None, args);
         let report = Report::generate(&config, "Prompt", None, "Response", Duration::from_secs(1));
 
         assert!(report.content.contains("gpt-4o"));
