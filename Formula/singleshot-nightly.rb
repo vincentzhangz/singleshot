@@ -1,7 +1,7 @@
 class SingleshotNightly < Formula
   desc "A CLI tool for testing AI models with a single prompt (nightly)"
   homepage "https://github.com/vincentzhangz/singleshot"
-  version "0.2.0-nightly.20260204.59eae35"
+  version "0.2.0-nightly.20260204.1c9a5d7"
   license "MIT"
 
   conflicts_with "singleshot", because: "both install a singleshot binary"
@@ -9,18 +9,18 @@ class SingleshotNightly < Formula
   on_macos do
     on_arm do
       url "https://github.com/vincentzhangz/singleshot/releases/download/nightly/singleshot-aarch64-apple-darwin.tar.gz"
-      sha256 "edba981ea40f68d957382457465f2c7ecba6d567a9560a1cdf378c002931be67"
+      sha256 "6ba3c8c8d761fc20c26a7e166be6928b2dd0a6716936d4ff967c2c8728189ff0"
     end
     on_intel do
       url "https://github.com/vincentzhangz/singleshot/releases/download/nightly/singleshot-x86_64-apple-darwin.tar.gz"
-      sha256 "b1752222c1aae3afec3e4507b746144cf7a2c74c2fbf892d7c49cdb2e0fe82ef"
+      sha256 "072268546399d245510d33e9d91b43d6d7073c2000d1df47ba908b01b789dd5a"
     end
   end
 
   on_linux do
     on_intel do
       url "https://github.com/vincentzhangz/singleshot/releases/download/nightly/singleshot-x86_64-unknown-linux-gnu.tar.gz"
-      sha256 "1bad7d2d88a06065b163032c4a1b7a5df636969cc58dc4e295f92b52b9c0456d"
+      sha256 "9fdb206db8418fd651a19c820c9db1a7960115dca7bc61440f8a5018bb15ab8a"
     end
   end
 
